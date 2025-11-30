@@ -58,9 +58,13 @@ router.post('/inventario', async (req, res) => {
 
         const newSesionId = newSesionResult.rows[0].id; // <--- ID para vincular materiales
 
-        // ---------------------------------------------------------
-        // C. REGISTRAR MOVIMIENTOS_INVENTARIO (Salida de Stock)
-        // ---------------------------------------------------------
+        const updateCitaQuery = `
+            UPDATE citas
+            SET estado = 'en_progreso'::estado_cita
+            WHERE id = $1;
+        `;
+        await client.query(updateCitaQuery, [prevSesion.id_cita]);
+
         // C. DEFINIR Y REGISTRAR MOVIMIENTOS_INVENTARIO (Consumo)
         const consumoQuery = `
             INSERT INTO movimientos_inventario (
