@@ -1,0 +1,21 @@
+const clientesRouter = require('./src/routes/clientes');
+const artistasRouter = require('./src/routes/artistas');
+const citasRouter = require('./src/routes/citas');
+const inventarioRouter = require('./src/routes/inventario');
+const pagosRouter = require('./src/routes/pagos');
+const usuariosRouter = require('./src/routes/usuarios');
+const sesionesRouter = require('./src/routes/sesiones');
+const citasDisenosRouter = require('./src/routes/citas_disenos');
+const disenosRouter = require('./src/routes/disenos');
+const materialesRouter = require('./src/routes/materiales');
+
+console.log('clientesRouter:', typeof clientesRouter);
+console.log('artistasRouter:', typeof artistasRouter);
+console.log('citasRouter:', typeof citasRouter);
+console.log('inventarioRouter:', typeof inventarioRouter);
+console.log('pagosRouter:', typeof pagosRouter);
+console.log('usuariosRouter:', typeof usuariosRouter);
+console.log('sesionesRouter:', typeof sesionesRouter);
+console.log('citasDisenosRouter:', typeof citasDisenosRouter);
+console.log('disenosRouter:', typeof disenosRouter);
+console.log('materialesRouter:', typeof materialesRouter);
