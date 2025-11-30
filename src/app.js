@@ -12,6 +12,8 @@ const citasDisenosRouter = require('./routes/citas_disenos');
 const disenosRouter = require('./routes/disenos');
 const materialesRouter = require('./routes/materiales');
 const usuariosRouter = require('./routes/usuarios');
+const proveedoresRouter = require('./routes/proveedores');
+const ordenesCompraRouter = require('./routes/ordenes_compra');
 const app = express();
 
 // Middlewares
@@ -30,6 +32,8 @@ app.use('/api/sesiones', sesionesRouter);
 app.use('/api/disenos', disenosRouter);
 app.use('/api/citas_disenos', citasDisenosRouter);
 app.use('/api/materiales', materialesRouter);
+app.use('/api/proveedores', proveedoresRouter);
+app.use('/api/ordenes_compra', ordenesCompraRouter);
 
 // Ruta de prueba 
 app.get('/', (req, res) => {
