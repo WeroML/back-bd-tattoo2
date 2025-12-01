@@ -1,5 +1,6 @@
 // RUTA: /src/app.js
 const express = require('express');
+const cors = require('cors'); // <--- 1. AGREGAR ESTA IMPORTACIÓN
 
 // Importar rutas
 const clientesRouter = require('./routes/clientes');
@@ -21,6 +22,7 @@ const app = express();
 
 // Middlewares
 // lectura en formato JSON
+app.use(cors()); // <--- 2. AGREGAR ESTO AQUÍ (Antes de las rutas y del json)
 app.use(express.json());
 
 // Definir rutas (Endpoints)
@@ -39,6 +41,7 @@ app.use('/api/proveedores', proveedoresRouter);
 app.use('/api/materiales_sesion', materialesSesionRouter);
 app.use('/api/compras', comprasRouter);
 app.use('/api/movimientos_inventario', movimientosInventarioRouter);
+
 
 // Ruta de prueba 
 app.get('/', (req, res) => {
