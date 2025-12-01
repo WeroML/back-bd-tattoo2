@@ -2,7 +2,6 @@
 const express = require('express');
 
 // Importar rutas
-// CAMBIO IMPORTANTE: Usamos './' en lugar de '../' porque la carpeta routes está dentro de src
 const clientesRouter = require('./routes/clientes');
 const artistasRouter = require('./routes/artistas');
 const citasRouter = require('./routes/citas');
@@ -17,17 +16,15 @@ const proveedoresRouter = require('./routes/proveedores');
 const materialesSesionRouter = require('./routes/materiales_sesion');
 const comprasRouter = require('./routes/compras');
 const movimientosInventarioRouter = require('./routes/movimientos_inventario');
+
 const app = express();
 
-// --- MIDDLEWARES ---
-
-// 2. ACTIVAR CORS
-app.use(cors());
-
-// Lectura en formato JSON
+// Middlewares
+// lectura en formato JSON
 app.use(express.json());
 
 // Definir rutas (Endpoints)
+// Todas las rutas de API - prefijo '/api'
 app.use('/api/clientes', clientesRouter);
 app.use('/api/usuarios', usuariosRouter);
 app.use('/api/artistas', artistasRouter);
@@ -45,7 +42,7 @@ app.use('/api/movimientos_inventario', movimientosInventarioRouter);
 
 // Ruta de prueba 
 app.get('/', (req, res) => {
-    res.send('Tattoo Studio Backend está activo 🤘');
+    res.send('Tattoo Studio Backend está activo.');
 });
 
 module.exports = app;
