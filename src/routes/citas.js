@@ -98,14 +98,13 @@ router.post('/generar', async (req, res) => {
             RETURNING id;
         `;
 
-        // CORRECCIÓN: Usamos el operador ternario para asegurar que si el valor es NULL, 
         // se mantiene NULL para la inserción, asumiendo que las columnas son NULLABLES.
         const sesionValues = [
             nuevaCitaId,
             numero_sesion_inicial,
             fecha_programada,
-            duracion_estimada_minutos, // <-- Si es NULL, se mantiene NULL
-            total_estimado,            // <-- Si es NULL, se mantiene NULL
+            duracion_estimada_minutos,
+            total_estimado,
             estado_cita,
             creadoEn
         ];
@@ -121,7 +120,7 @@ router.post('/generar', async (req, res) => {
         });
 
     } catch (err) {
-        // 4. REVERTIR TRANSACCIÓN si algo falla (ej. FK, tipo de dato)
+        // 4. REVERTIR TRANSACCIÓN si algo falla 
         await client.query('ROLLBACK');
         console.error('Error transaccional al generar cita:', err);
 
@@ -139,5 +138,7 @@ router.post('/generar', async (req, res) => {
         client.release();
     }
 });
+
+
 
 module.exports = router;

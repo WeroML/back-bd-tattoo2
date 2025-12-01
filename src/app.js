@@ -1,6 +1,5 @@
 // RUTA: /src/app.js
 const express = require('express');
-const cors = require('cors'); 
 
 // Importar rutas
 // CAMBIO IMPORTANTE: Usamos './' en lugar de '../' porque la carpeta routes está dentro de src
@@ -14,7 +13,10 @@ const citasDisenosRouter = require('./routes/citas_disenos');
 const disenosRouter = require('./routes/disenos');
 const materialesRouter = require('./routes/materiales');
 const usuariosRouter = require('./routes/usuarios');
-
+const proveedoresRouter = require('./routes/proveedores');
+const materialesSesionRouter = require('./routes/materiales_sesion');
+const comprasRouter = require('./routes/compras');
+const movimientosInventarioRouter = require('./routes/movimientos_inventario');
 const app = express();
 
 // --- MIDDLEWARES ---
@@ -36,6 +38,10 @@ app.use('/api/sesiones', sesionesRouter);
 app.use('/api/disenos', disenosRouter);
 app.use('/api/citas_disenos', citasDisenosRouter);
 app.use('/api/materiales', materialesRouter);
+app.use('/api/proveedores', proveedoresRouter);
+app.use('/api/materiales_sesion', materialesSesionRouter);
+app.use('/api/compras', comprasRouter);
+app.use('/api/movimientos_inventario', movimientosInventarioRouter);
 
 // Ruta de prueba 
 app.get('/', (req, res) => {
