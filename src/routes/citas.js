@@ -139,6 +139,97 @@ router.post('/generar', async (req, res) => {
     }
 });
 
+// PUT /api/citas/:id - Actualizar una cita
+router.put('/:id', async (req, res) => {
+    const { id } = req.params;
+    const {
+        id_artista,
+        fecha_programada,
+        duracion_estimada_minutos,
+        total_estimado,
+        estado,
+        notas
+    } = req.body;
 
+    // Construcción dinámica de la consulta UPDATE
+    const fields = [];
+    const values = [];
+    let paramIndex = 1;
+
+    if (id_artista !== undefined) {
+        fields.push(`id_artista = $${paramIndex++}`);
+        values.push(id_artista);
+    }
+    if (fecha_programada !== undefined) {
+        fields.push(`fecha_programada = $${paramIndex++}`);
+        values.push(fecha_programada);
+    }
+    if (duracion_estimada_minutos !== undefined) {
+        fields.push(`duracion_estimada_minutos = $${paramIndex++}`);
+        values.push(duracion_estimada_minutos);
+    }
+    if (total_estimado !== undefined) {
+        fields.push(`total_estimado = $${paramIndex++}`);
+        values.push(total_estimado);
+    }
+    if (estado !== undefined) {
+        fields.push(`estado = $${paramIndex++}::estado_cita`);
+        values.push(estado);
+    }
+    if (notas !== undefined) {
+        fields.push(`notas = $${paramIndex++}`);
+        values.push(notas);
+    }
+
+    if (fields.length === 0) {
+        return res.status(400).json({ error: 'No se proporcionaron campos para actualizar.' });
+    }
+
+    values.push(id);
+    const queryText = `
+        UPDATE citas
+        SET ${fields.join(', ')}
+        WHERE id = $${paramIndex}
+        RETURNING *
+    `;
+
+    try {
+        const result = await db.query(queryText, values);
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Cita no encontrada.' });
+        }
+
+        res.status(200).json({
+            message: 'Cita actualizada exitosamente.',
+            cita: result.rows[0]
+        });
+    } catch (err) {
+        console.error(`Error al actualizar cita ${id}:`, err);
+        res.status(500).json({ error: 'Error al actualizar la cita.' });
+    }
+});
+
+// DELETE /api/citas/:id - Eliminar una cita
+router.delete('/:id', async (req, res) => {
+    const { id } = req.params;
+    
+    // Nota: Debido a ON DELETE CASCADE en la base de datos, 
+    // esto también eliminará las sesiones y citas_disenos relacionadas.
+    const queryText = 'DELETE FROM citas WHERE id = $1 RETURNING id';
+
+    try {
+        const result = await db.query(queryText, [id]);
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Cita no encontrada.' });
+        }
+
+        res.status(200).json({ message: 'Cita eliminada exitosamente.' });
+    } catch (err) {
+        console.error(`Error al eliminar cita ${id}:`, err);
+        res.status(500).json({ error: 'Error al eliminar la cita.' });
+    }
+});
 
 module.exports = router;
