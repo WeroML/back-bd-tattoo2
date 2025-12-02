@@ -3,20 +3,45 @@ const db = require('../db');
 const router = express.Router();
 
 // GET /api/inventario/materiales
+// AQUI SE USA EL ÍNDICE
 router.get('/materiales', async (req, res) => {
-    const queryText = `
-        SELECT id, nombre, codigo, cantidad_existencia, nivel_reorden, precio_costo, activo 
-        FROM materiales 
-        ORDER BY nombre ASC
-    `;
-    try {
-        const result = await db.query(queryText);
-        res.status(200).json(result.rows);
-    } catch (err) {
-        console.error('Error al obtener materiales:', err);
-        res.status(500).json({ error: 'Error al consultar la tabla materiales.' });
-    }
+  try {
+
+    // 1️ Desactivar Seq Scan (SOLO DURANTE ESTA SESIÓN)
+    await db.query(`SET enable_seqscan = off;`);
+
+    // 2️ Ejecutar el EXPLAIN ANALYZE
+    const explainResult = await db.query(`
+      EXPLAIN ANALYZE
+      SELECT id, nombre, codigo, cantidad_existencia, nivel_reorden, precio_costo, activo
+      FROM materiales
+      WHERE activo = TRUE
+      ORDER BY nombre ASC;
+    `);
+
+    console.log("\n====== EXPLAIN ANALYZE ======");
+    explainResult.rows.forEach(row => console.log(row['QUERY PLAN']));
+    console.log("=============================\n");
+
+    // 3️ Ejecutar la consulta real
+    const data = await db.query(`
+      SELECT id, nombre, codigo, cantidad_existencia, nivel_reorden, precio_costo, activo
+      FROM materiales
+      WHERE activo = TRUE
+      ORDER BY nombre ASC;
+    `);
+
+    // 4️ Volver a activar Seq Scan
+    await db.query(`SET enable_seqscan = on;`);
+
+    res.status(200).json(data.rows);
+
+  } catch (err) {
+    console.error('Error al obtener materiales:', err);
+    res.status(500).json({ error: 'Error al consultar la tabla materiales.' });
+  }
 });
+
 
 // GET /api/inventario/compras
 router.get('/compras', async (req, res) => {
