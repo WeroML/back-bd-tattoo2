@@ -7,7 +7,8 @@ const router = express.Router();
 // (Opcional: puedes filtrar por ?id_sesion=X en la query string)
 // -------------------------------------------------------------
 router.get('/', async (req, res) => {
-    const { id_sesion } = req.query;
+    // Capturamos ambos parámetros
+    const { id_sesion, id_material } = req.query;
 
     try {
         let queryText = `
@@ -15,7 +16,8 @@ router.get('/', async (req, res) => {
                 ms.id,
                 ms.id_sesion,
                 ms.id_material,
-                m.nombre AS nombre_material, -- Traemos el nombre para que sea legible
+                m.nombre AS nombre_material,
+                m.codigo,
                 m.unidad,
                 ms.cantidad_usada,
                 ms.costo_unitario,
@@ -23,28 +25,36 @@ router.get('/', async (req, res) => {
                 ms.notas
             FROM materiales_sesion ms
             JOIN materiales m ON ms.id_material = m.id
-        `;
+            WHERE 1=1 
+        `; // Usamos WHERE 1=1 para facilitar la concatenación de ANDs
 
         const params = [];
+        let paramCounter = 1;
 
-        // Si envían ?id_sesion=123, filtramos por esa sesión
+        // Filtro por Sesión
         if (id_sesion) {
-            queryText += ' WHERE ms.id_sesion = $1';
+            queryText += ` AND ms.id_sesion = $${paramCounter}`;
             params.push(id_sesion);
+            paramCounter++;
+        }
+
+        // Filtro por Material (NUEVO)
+        if (id_material) {
+            queryText += ` AND ms.id_material = $${paramCounter}`;
+            params.push(id_material);
+            paramCounter++;
         }
 
         queryText += ' ORDER BY ms.id DESC;';
 
         const result = await pool.query(queryText, params);
-
         res.status(200).json(result.rows);
 
     } catch (err) {
         console.error('Error al obtener materiales de sesión:', err);
-        res.status(500).json({ error: 'Error interno al consultar los materiales de la sesión.' });
+        res.status(500).json({ error: 'Error interno al consultar los materiales.' });
     }
 });
-
 // -------------------------------------------------------------
 // POST /api/materiales_sesion - Registrar material manualmente
 // -------------------------------------------------------------

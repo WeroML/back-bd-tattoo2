@@ -65,105 +65,55 @@ router.get('/:id', async (req, res) => {
     }
 });
 
+// /routes/citas.js - POST /generar (Simplificado)
 
-// POST /api/citas/generar - Crea una cita y su sesión inicial
 router.post('/generar', async (req, res) => {
-    // 1. Desestructurar los datos de la petición
-    const {
-        id_cliente,
-        id_artista,
-        fecha_programada,
-        duracion_estimada_minutos,
-        total_estimado,
-        notas,
-        creado_por // ID del usuario que registra la cita (ej. administrador/recepcionista)
+    const { 
+        id_cliente, id_artista, fecha_programada, 
+        duracion_estimada_minutos, total_estimado, notas, creado_por 
     } = req.body;
 
-    const estado_cita = 'programada';
-    const numero_sesion_inicial = 1;
+    // Validación básica...
 
-    // Asignar un cliente para la conexión a la base de datos
     const client = await pool.connect();
 
     try {
-        // 2. INICIAR TRANSACCIÓN
-        await client.query('BEGIN');
-
-        // A. INSERTAR EN CITAS
+        // Solo necesitamos insertar la CITA. 
+        // El Trigger 'trg_audit_citas_a_sesiones' creará la sesión automáticamente.
+        
         const citaInsertQuery = `
             INSERT INTO citas (
                 id_cliente, id_artista, fecha_programada, duracion_estimada_minutos, 
                 total_estimado, estado, creado_por, notas
-            ) VALUES ($1, $2, $3, $4, $5, $6::estado_cita, $7, $8)
+            ) VALUES ($1, $2, $3, $4, $5, 'programada'::estado_cita, $6, $7)
             RETURNING id, creado_en; 
         `;
-
-        const citaValues = [
-            id_cliente,
-            id_artista,
-            fecha_programada,
-            duracion_estimada_minutos,
-            total_estimado,
-            estado_cita,
-            creado_por,
+        
+        const values = [
+            id_cliente, id_artista, fecha_programada, 
+            duracion_estimada_minutos || null, 
+            total_estimado || null, 
+            creado_por, 
             notas || 'Cita generada por API'
         ];
-
-        const citaResult = await client.query(citaInsertQuery, citaValues);
-        const nuevaCitaId = citaResult.rows[0].id;
-        const creadoEn = citaResult.rows[0].creado_en;
-
-
-        // B. INSERTAR EN SESIONES (Registro inicial)
-        const sesionInsertQuery = `
-            INSERT INTO sesiones (
-                id_cita, numero_sesion, fecha_programada, duracion_minutos, monto_cobrado, estado, creado_en
-            ) VALUES ($1, $2, $3, $4, $5, $6::estado_sesion, $7)
-            RETURNING id;
-        `;
-
-        // se mantiene NULL para la inserción, asumiendo que las columnas son NULLABLES.
-        const sesionValues = [
-            nuevaCitaId,
-            numero_sesion_inicial,
-            fecha_programada,
-            duracion_estimada_minutos,
-            total_estimado,
-            estado_cita,
-            creadoEn
-        ];
-
-        const sesionResult = await client.query(sesionInsertQuery, sesionValues);
-        // 3. CONFIRMAR TRANSACCIÓN
-        await client.query('COMMIT');
-
+        
+        const result = await client.query(citaInsertQuery, values);
+        
         res.status(201).json({
-            message: 'Cita y sesión inicial creadas con éxito.',
-            cita_id: nuevaCitaId,
-            sesion_id: sesionResult.rows[0].id
+            message: 'Cita creada con éxito (Sesión generada automáticamente por DB).',
+            cita_id: result.rows[0].id
         });
 
     } catch (err) {
-        // 4. REVERTIR TRANSACCIÓN si algo falla 
-        await client.query('ROLLBACK');
-        console.error('Error transaccional al generar cita:', err);
-
-        // Manejo de errores específicos
-        if (err.code === '42601') {
-            return res.status(400).json({ error: `Error de sintaxis SQL. Verifique los casts de ENUMs. Mensaje: ${err.message}` });
-        }
-        if (err.code === '23503') {
-            return res.status(400).json({ error: 'Llave foránea inválida. El cliente, artista o usuario creador no existen.' });
-        }
-
-        res.status(500).json({ error: 'Error interno: La transacción fue abortada.' });
+        console.error('Error al generar cita:', err);
+        res.status(500).json({ error: 'Error interno.' });
     } finally {
-        // 5. Liberar el cliente
         client.release();
     }
 });
+// /routes/citas.js
 
-// PUT /api/citas/:id - Actualizar cita y procesar materiales si aplica
+// PUT /api/citas/:id
 router.put('/:id', async (req, res) => {
     const { id } = req.params;
     const { 
@@ -171,21 +121,33 @@ router.put('/:id', async (req, res) => {
         total_estimado, 
         estado, 
         notas,
-        materiales,   // <--- Array nuevo: [{ id, cantidad }, ...]
-        usuario_id    // ID de quien hace la acción (para el historial)
+        materiales,   
+        usuario_id    
     } = req.body;
 
     const client = await pool.connect();
 
     try {
-        await client.query('BEGIN'); // 1. INICIAR TRANSACCIÓN
+        // ===============================================================
+        // CASO 1: CANCELACIÓN (Delega a la función PL/SQL)
+        // ===============================================================
+        if (estado === 'cancelada') {
+            const motivoCancelacion = notas || 'Cancelación solicitada vía API';
+            const usuarioCancelacion = usuario_id || 1; // Fallback ID admin
 
-        // ---------------------------------------------------------------
-        // A. ACTUALIZAR LA CITA
-        // ---------------------------------------------------------------
-        // (Al hacer esto, tu Trigger 'trg_actualizar_cita_cascada' se dispara
-        // y actualiza la sesión a 'en_progreso' automáticamente)
-        
+            // Llamamos a la función que creamos en el Paso 2
+            const cancelQuery = `SELECT cancelar_cita_con_reembolso($1, $2, $3) AS resultado`;
+            const cancelResult = await client.query(cancelQuery, [id, motivoCancelacion, usuarioCancelacion]);
+            
+            return res.status(200).json(cancelResult.rows[0].resultado);
+        }
+
+        // ===============================================================
+        // CASO 2: ACTUALIZACIÓN NORMAL (Transacción manual)
+        // ===============================================================
+        await client.query('BEGIN'); 
+
+        // A. Construir UPDATE dinámico para la tabla CITAS
         const updates = [];
         const values = [id];
         let idx = 2;
@@ -195,31 +157,35 @@ router.put('/:id', async (req, res) => {
         if (estado)           { updates.push(`estado = $${idx++}::estado_cita`); values.push(estado); }
         if (notas)            { updates.push(`notas = $${idx++}`); values.push(notas); }
 
-        if (updates.length === 0) {
+        // Si no hay nada que actualizar en la cita y tampoco materiales, error.
+        if (updates.length === 0 && (!materiales || materiales.length === 0)) {
             await client.query('ROLLBACK');
-            return res.status(400).json({ error: 'No se enviaron campos para actualizar.' });
+            return res.status(400).json({ error: 'No hay datos para actualizar.' });
         }
 
-        const updateQuery = `
-            UPDATE citas 
-            SET ${updates.join(', ')} 
-            WHERE id = $1 
-            RETURNING *;
-        `;
-        
-        const citaResult = await client.query(updateQuery, values);
+        let citaActualizada = null;
 
-        if (citaResult.rowCount === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Cita no encontrada.' });
+        if (updates.length > 0) {
+            const updateQuery = `
+                UPDATE citas 
+                SET ${updates.join(', ')} 
+                WHERE id = $1 
+                RETURNING *;
+            `;
+            const result = await client.query(updateQuery, values);
+            
+            if (result.rowCount === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({ error: 'Cita no encontrada.' });
+            }
+            citaActualizada = result.rows[0];
         }
 
-        // ---------------------------------------------------------------
-        // B. PROCESAR MATERIALES (Solo si es 'en_progreso' y hay lista)
-        // ---------------------------------------------------------------
+        // B. PROCESAR MATERIALES (Solo si pasa a 'en_progreso')
+        // El Trigger de la BD ya habrá creado/actualizado la sesión al hacer el UPDATE arriba
         if (estado === 'en_progreso' && materiales && materiales.length > 0) {
             
-            // 1. Obtener la sesión activa (que el Trigger acaba de actualizar/crear)
+            // Buscar la sesión activa más reciente
             const sesionQuery = `
                 SELECT id FROM sesiones 
                 WHERE id_cita = $1 
@@ -231,14 +197,10 @@ router.put('/:id', async (req, res) => {
                 throw new Error("No se encontró una sesión activa para asignar los materiales.");
             }
             const idSesion = sesionResult.rows[0].id;
-            const idUsuario = usuario_id || 1; // Fallback si no envían usuario
+            const idUsuario = usuario_id || 1; 
 
-            // 2. Iterar sobre los materiales recibidos del Frontend
             for (const mat of materiales) {
-                // mat tiene: { id: 5, cantidad: 2 }
-                
-                // a. Registrar Consumo (Movimiento Inventario)
-                // OJO: Tu Trigger 'trg_validar_stock' saltará aquí si no hay suficiente
+                // 1. Registrar Consumo (Movimiento Inventario)
                 const movQuery = `
                     INSERT INTO movimientos_inventario (
                         id_material, tipo_movimiento, cantidad, 
@@ -250,12 +212,10 @@ router.put('/:id', async (req, res) => {
                         'Consumo registrado desde Cita #' || $5, NOW()
                     );
                 `;
-                await client.query(movQuery, [
-                    mat.id, mat.cantidad, idSesion, idUsuario, id
-                ]);
+                await client.query(movQuery, [mat.id, mat.cantidad, idSesion, idUsuario, id]);
 
-                // b. Registrar Costo (Materiales Sesion)
-                // Obtenemos precio actual para ser precisos
+                // 2. Registrar Costo (Materiales Sesion)
+                // Omitimos 'subtotal' ya que es columna generada
                 const costoQuery = `
                     INSERT INTO materiales_sesion (
                         id_sesion, id_material, cantidad_usada, 
@@ -263,7 +223,7 @@ router.put('/:id', async (req, res) => {
                     ) 
                     SELECT 
                         $1, $2, $3, 
-                        precio_costo, -- Tomamos el precio de la tabla materiales
+                        precio_costo, 
                         (SELECT nombre FROM materiales WHERE id = $2)
                     FROM materiales WHERE id = $2;
                 `;
@@ -271,24 +231,24 @@ router.put('/:id', async (req, res) => {
             }
         }
 
-        await client.query('COMMIT'); // CONFIRMAR CAMBIOS
+        await client.query('COMMIT'); 
 
         res.status(200).json({
-            message: 'Cita actualizada y materiales procesados correctamente.',
-            cita: citaResult.rows[0],
+            message: 'Actualización exitosa.',
+            cita: citaActualizada,
             materiales_procesados: materiales ? materiales.length : 0
         });
 
     } catch (err) {
-        await client.query('ROLLBACK');
+        // Solo hacemos rollback si la transacción manual estaba abierta
+        if (estado !== 'cancelada') {
+            await client.query('ROLLBACK');
+        }
+        
         console.error('Error al actualizar cita:', err);
         
-        // Manejo de errores específicos
-        if (err.code === 'P0001') { // Código que definimos en tu Trigger de Stock
-            return res.status(409).json({ 
-                error: 'Stock Insuficiente', 
-                detalle: err.message // El mensaje del trigger ("El material X solo tiene...")
-            });
+        if (err.code === 'P0001') { 
+            return res.status(409).json({ error: 'Stock Insuficiente', detalle: err.message });
         }
         if (err.code === '22P02') {
              return res.status(400).json({ error: 'Tipo de dato inválido o valor de ENUM incorrecto.' });

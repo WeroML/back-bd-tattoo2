@@ -21,7 +21,7 @@ const reportesRouter = require('./routes/reportes');
 const funcionesResumenRoutes = require('./routes/funciones_resumen');
 const artistasCitasSecuenciaRouter = require('./routes/artistas_citas_secuencia');
 const categoriasArtistasCubeRouter = require('./routes/categorias_artistas_cube');
-
+const categoriasRouter = require('./routes/categorias');
 const app = express();
 
 // Middlewares
@@ -49,6 +49,7 @@ app.use('/api/reportes', reportesRouter);
 app.use('/api', funcionesResumenRoutes);
 app.use('/api', artistasCitasSecuenciaRouter);
 app.use('/api', categoriasArtistasCubeRouter);
+app.use('/api/categorias', categoriasRouter);
 
 // Ruta de prueba 
 app.get('/', (req, res) => {
