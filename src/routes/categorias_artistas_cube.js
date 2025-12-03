@@ -9,42 +9,32 @@ router.get('/categorias_artistas_cube', async (req, res) => {
     const query = `
       SELECT
         cat.nombre AS categoria,
-        u.nombre || ' ' || COALESCE(u.apellido, '') AS artista,
+        MIN(u.nombre || ' ' || COALESCE(u.apellido, '')) AS artista,
         GROUPING(cat.nombre) AS g_categoria,
-        GROUPING(u.nombre || ' ' || COALESCE(u.apellido, '')) AS g_artista,
-        COUNT(DISTINCT c.id) AS total_citas,
-        COALESCE(SUM(p.monto), 0) AS total_monto
-      FROM citas c
-      JOIN citas_disenos cd ON cd.id_cita = c.id
-      JOIN disenos d ON d.id = cd.id_diseno
-      JOIN categorias_disenos cat ON cat.id = d.id_categoria
-      JOIN artistas a ON c.id_artista = a.id
-      JOIN usuarios u ON a.id_usuario = u.id
-      LEFT JOIN pagos p 
-        ON p.id_cita = c.id
-        AND p.estado = 'pagado'
-      -- Si quieres solo citas completadas, descomenta:
-      -- WHERE c.estado = 'completada'
-      GROUP BY CUBE (
-        cat.nombre,
-        u.nombre || ' ' || COALESCE(u.apellido, '')
-      )
+        GROUPING(a.id) AS g_artista,
+        COUNT(d.id) AS total_disenos,
+        COALESCE(SUM(d.precio_base), 0) AS total_precio
+      FROM disenos d
+      LEFT JOIN categorias_disenos cat ON cat.id = d.id_categoria
+      LEFT JOIN artistas a ON a.id = d.creado_por
+      LEFT JOIN usuarios u ON u.id = a.id_usuario
+      GROUP BY CUBE (cat.nombre, a.id)
       ORDER BY
         cat.nombre NULLS LAST,
-        artista NULLS LAST;
+        MIN(u.nombre || ' ' || COALESCE(u.apellido, '')) NULLS LAST;
     `;
 
     const result = await pool.query(query);
 
     const data = result.rows.map((row) => {
+      const gCat = Number(row.g_categoria);
+      const gArt = Number(row.g_artista);
+
       let tipoFila = 'detalle';
       let categoria = row.categoria;
       let artista = row.artista;
 
-      const gCat = Number(row.g_categoria);
-      const gArt = Number(row.g_artista);
-
-      // 1 = columna agrupada (TOTAL a ese nivel)
+      // 1 = es un TOTAL en ese nivel
       if (gCat === 1 && gArt === 1) {
         // TOTAL GENERAL
         tipoFila = 'total_general';
@@ -59,7 +49,7 @@ router.get('/categorias_artistas_cube', async (req, res) => {
         tipoFila = 'total_categoria';
         artista = 'TODOS LOS ARTISTAS';
       } else {
-        // Detalle: categoría + artista específicos
+        // Detalle normal
         tipoFila = 'detalle';
       }
 
@@ -67,13 +57,13 @@ router.get('/categorias_artistas_cube', async (req, res) => {
         categoria,
         artista,
         tipoFila,
-        totalCitas: Number(row.total_citas),
-        totalMonto: Number(row.total_monto),
+        totalDisenos: Number(row.total_disenos),
+        totalPrecio: Number(row.total_precio),
       };
     });
 
     res.json({
-      message: 'Análisis de Categorías vs. Artistas con CUBE',
+      message: 'Análisis de Categorías vs Artistas con CUBE (diseños)',
       data,
     });
   } catch (error) {
