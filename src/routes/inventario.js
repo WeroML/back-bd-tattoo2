@@ -43,6 +43,28 @@ router.get('/materiales', async (req, res) => {
 });
 
 
+// Materiales faltantes - Reporte de inventario bajo
+// GET /api/inventario/inventario-bajo
+router.get('/inventario-bajo', async (req, res) => {
+    try {
+        // Consultamos directamente la vista
+        const queryText = 'SELECT * FROM vista_materiales_faltantes ORDER BY cantidad_existencia ASC;';
+        
+        const result = await db.query(queryText); // Cambiado de pool.query a db.query
+        
+        res.status(200).json({
+            mensaje: result.rowCount > 0 ? 'Se encontraron materiales con stock bajo.' : 'Inventario saludable.',
+            total_items: result.rowCount,
+            materiales: result.rows
+        });
+
+    } catch (err) {
+        console.error('Error al obtener reporte de inventario bajo:', err);
+        res.status(500).json({ error: 'Error interno al generar el reporte.' });
+    }
+});
+
+
 // GET /api/inventario/compras
 router.get('/compras', async (req, res) => {
     const queryText = `
