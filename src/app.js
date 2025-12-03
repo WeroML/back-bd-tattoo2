@@ -19,6 +19,8 @@ const comprasRouter = require('./routes/compras');
 const movimientosInventarioRouter = require('./routes/movimientos_inventario');
 const reportesRouter = require('./routes/reportes');
 const funcionesResumenRoutes = require('./routes/funciones_resumen');
+const artistasCitasSecuenciaRouter = require('./routes/artistas_citas_secuencia');
+const categoriasArtistasCubeRouter = require('./routes/categorias_artistas_cube');
 
 const app = express();
 
@@ -45,7 +47,8 @@ app.use('/api/compras', comprasRouter);
 app.use('/api/movimientos_inventario', movimientosInventarioRouter);
 app.use('/api/reportes', reportesRouter);
 app.use('/api', funcionesResumenRoutes);
-
+app.use('/api', artistasCitasSecuenciaRouter);
+app.use('/api', categoriasArtistasCubeRouter);
 
 // Ruta de prueba 
 app.get('/', (req, res) => {
