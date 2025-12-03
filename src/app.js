@@ -18,6 +18,7 @@ const materialesSesionRouter = require('./routes/materiales_sesion');
 const comprasRouter = require('./routes/compras');
 const movimientosInventarioRouter = require('./routes/movimientos_inventario');
 const reportesRouter = require('./routes/reportes');
+const funcionesResumenRoutes = require('./routes/funciones_resumen');
 
 const app = express();
 
@@ -43,6 +44,7 @@ app.use('/api/materiales_sesion', materialesSesionRouter);
 app.use('/api/compras', comprasRouter);
 app.use('/api/movimientos_inventario', movimientosInventarioRouter);
 app.use('/api/reportes', reportesRouter);
+app.use('/api', funcionesResumenRoutes);
 
 
 // Ruta de prueba 
