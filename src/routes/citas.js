@@ -4,6 +4,30 @@ const db = require('../db');
 const { pool } = require('../db');
 const router = express.Router();
 
+// GET /api/citas/resumen/:id - Obtener el resumen completo de UNA cita específica
+router.get('/resumen/:id', async (req, res) => {
+    const { id } = req.params; // Aquí capturas el '139' de la URL
+
+    try {
+        const queryText = `
+            SELECT * FROM vista_detalles_citas 
+            WHERE id_cita = $1;
+        `;
+        
+        const result = await pool.query(queryText, [id]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Cita no encontrada.' });
+        }
+
+        res.json(result.rows[0]);
+
+    } catch (err) {
+        console.error('Error al obtener el resumen de la cita:', err);
+        res.status(500).json({ error: 'Error interno del servidor.' });
+    }
+});
+
 // GET /api/citas
 router.get('/', async (req, res) => {
     const queryText = `
