@@ -206,4 +206,31 @@ router.delete('/materiales/:id', async (req, res) => {
     }
 });
 
+// GET /api/inventario/reporte-proveedores
+// Muestra el uso de GROUP BY y HAVING
+router.get('/reporte-proveedores', async (req, res) => {
+  try {
+    const query = `
+      SELECT 
+        p.nombre AS proveedor,
+        COUNT(DISTINCT m.id) AS variedad_productos,
+        SUM(cd.cantidad) AS total_unidades_compradas,
+        MAX(c.fecha_compra) AS ultima_compra
+      FROM proveedores p
+      JOIN compras c ON p.id = c.id_proveedor
+      JOIN compras_detalle cd ON c.id = cd.id_compra
+      JOIN materiales m ON cd.id_material = m.id
+      GROUP BY p.nombre
+      HAVING COUNT(DISTINCT m.id) >= 1
+      ORDER BY total_unidades_compradas DESC;
+    `;
+    
+    const result = await db.query(query);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error en reporte proveedores:', err);
+    res.status(500).json({ error: 'Error al generar reporte agrupado.' });
+  }
+});
+
 module.exports = router;

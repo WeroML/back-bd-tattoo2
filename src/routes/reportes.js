@@ -90,4 +90,51 @@ router.get('/dashboard/proximas', async (req, res) => {
     }
 });
 
+// -------------------------------------------------------------
+// GET /api/reportes/financiero-rollup
+// Uso de ROLLUP para generar subtotales por Mes y Totales Generales
+// -------------------------------------------------------------
+router.get('/financiero-rollup', async (req, res) => {
+    try {
+        const queryText = `
+            SELECT 
+                -- Formateamos fecha a 'YYYY-MM' (Mes)
+                TO_CHAR(p.fecha_pago, 'YYYY-MM') AS mes,
+                
+                -- Nombre del artista
+                u.nombre_usuario AS artista,
+                
+                -- Suma de ingresos
+                SUM(p.monto) AS total_ingresos,
+                
+                -- Conteo de citas pagadas
+                COUNT(p.id) AS cantidad_citas
+
+            FROM pagos p
+            JOIN citas c ON p.id_cita = c.id
+            JOIN artistas a ON c.id_artista = a.id
+            JOIN usuarios u ON a.id_usuario = u.id
+            
+            WHERE p.estado = 'pagado'
+            
+            -- AQUÍ ESTÁ LA MAGIA DEL ROLLUP
+            -- Agrupa por Mes y luego por Artista.
+            -- Genera:
+            -- 1. Filas normales (Mes + Artista)
+            -- 2. Subtotales por Mes (Mes + NULL Artista)
+            -- 3. Gran Total (NULL Mes + NULL Artista)
+            GROUP BY ROLLUP(TO_CHAR(p.fecha_pago, 'YYYY-MM'), u.nombre_usuario)
+            
+            ORDER BY mes DESC NULLS LAST, artista ASC NULLS LAST;
+        `;
+
+        const result = await db.query(queryText);
+        res.status(200).json(result.rows);
+
+    } catch (err) {
+        console.error('Error en reporte ROLLUP:', err);
+        res.status(500).json({ error: 'Error al generar reporte financiero.' });
+    }
+});
+
 module.exports = router;
