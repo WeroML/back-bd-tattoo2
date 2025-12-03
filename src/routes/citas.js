@@ -163,47 +163,43 @@ router.post('/generar', async (req, res) => {
     }
 });
 
-// PUT /api/citas/:id - Actualización simplificada (El Trigger maneja la lógica de negocio)
+// PUT /api/citas/:id - Actualizar cita y procesar materiales si aplica
 router.put('/:id', async (req, res) => {
     const { id } = req.params;
     const { 
         fecha_programada, 
         total_estimado, 
         estado, 
-        notas 
+        notas,
+        materiales,   // <--- Array nuevo: [{ id, cantidad }, ...]
+        usuario_id    // ID de quien hace la acción (para el historial)
     } = req.body;
 
+    const client = await pool.connect();
+
     try {
-        // 1. Construcción dinámica de la consulta (Solo actualizamos lo que envías)
+        await client.query('BEGIN'); // 1. INICIAR TRANSACCIÓN
+
+        // ---------------------------------------------------------------
+        // A. ACTUALIZAR LA CITA
+        // ---------------------------------------------------------------
+        // (Al hacer esto, tu Trigger 'trg_actualizar_cita_cascada' se dispara
+        // y actualiza la sesión a 'en_progreso' automáticamente)
+        
         const updates = [];
         const values = [id];
-        let idx = 2; // El $1 es el id
+        let idx = 2;
 
-        if (fecha_programada) { 
-            updates.push(`fecha_programada = $${idx++}`); 
-            values.push(fecha_programada); 
-        }
-        if (total_estimado) { 
-            updates.push(`total_estimado = $${idx++}`); 
-            values.push(total_estimado); 
-        }
-        if (estado) { 
-            // Hacemos cast explícito al ENUM
-            updates.push(`estado = $${idx++}::estado_cita`); 
-            values.push(estado); 
-        }
-        if (notas) { 
-            updates.push(`notas = $${idx++}`); 
-            values.push(notas); 
-        }
+        if (fecha_programada) { updates.push(`fecha_programada = $${idx++}`); values.push(fecha_programada); }
+        if (total_estimado)   { updates.push(`total_estimado = $${idx++}`); values.push(total_estimado); }
+        if (estado)           { updates.push(`estado = $${idx++}::estado_cita`); values.push(estado); }
+        if (notas)            { updates.push(`notas = $${idx++}`); values.push(notas); }
 
-        // Validación: Si no mandan nada, no hacemos nada
         if (updates.length === 0) {
+            await client.query('ROLLBACK');
             return res.status(400).json({ error: 'No se enviaron campos para actualizar.' });
         }
 
-        // 2. Ejecutar el UPDATE
-        // Al ejecutarse esto, PostgreSQL disparará automáticamente tu función 'propagar_cambios_cita'
         const updateQuery = `
             UPDATE citas 
             SET ${updates.join(', ')} 
@@ -211,28 +207,96 @@ router.put('/:id', async (req, res) => {
             RETURNING *;
         `;
         
-        const result = await pool.query(updateQuery, values);
+        const citaResult = await client.query(updateQuery, values);
 
-        if (result.rowCount === 0) {
+        if (citaResult.rowCount === 0) {
+            await client.query('ROLLBACK');
             return res.status(404).json({ error: 'Cita no encontrada.' });
         }
 
-        // 3. Responder
+        // ---------------------------------------------------------------
+        // B. PROCESAR MATERIALES (Solo si es 'en_progreso' y hay lista)
+        // ---------------------------------------------------------------
+        if (estado === 'en_progreso' && materiales && materiales.length > 0) {
+            
+            // 1. Obtener la sesión activa (que el Trigger acaba de actualizar/crear)
+            const sesionQuery = `
+                SELECT id FROM sesiones 
+                WHERE id_cita = $1 
+                ORDER BY creado_en DESC LIMIT 1;
+            `;
+            const sesionResult = await client.query(sesionQuery, [id]);
+            
+            if (sesionResult.rowCount === 0) {
+                throw new Error("No se encontró una sesión activa para asignar los materiales.");
+            }
+            const idSesion = sesionResult.rows[0].id;
+            const idUsuario = usuario_id || 1; // Fallback si no envían usuario
+
+            // 2. Iterar sobre los materiales recibidos del Frontend
+            for (const mat of materiales) {
+                // mat tiene: { id: 5, cantidad: 2 }
+                
+                // a. Registrar Consumo (Movimiento Inventario)
+                // OJO: Tu Trigger 'trg_validar_stock' saltará aquí si no hay suficiente
+                const movQuery = `
+                    INSERT INTO movimientos_inventario (
+                        id_material, tipo_movimiento, cantidad, 
+                        id_sesion_relacionada, realizado_por, 
+                        notas, fecha_movimiento
+                    ) VALUES (
+                        $1, 'consumo'::tipo_movimiento, $2, 
+                        $3, $4, 
+                        'Consumo registrado desde Cita #' || $5, NOW()
+                    );
+                `;
+                await client.query(movQuery, [
+                    mat.id, mat.cantidad, idSesion, idUsuario, id
+                ]);
+
+                // b. Registrar Costo (Materiales Sesion)
+                // Obtenemos precio actual para ser precisos
+                const costoQuery = `
+                    INSERT INTO materiales_sesion (
+                        id_sesion, id_material, cantidad_usada, 
+                        costo_unitario, notas
+                    ) 
+                    SELECT 
+                        $1, $2, $3, 
+                        precio_costo, -- Tomamos el precio de la tabla materiales
+                        (SELECT nombre FROM materiales WHERE id = $2)
+                    FROM materiales WHERE id = $2;
+                `;
+                await client.query(costoQuery, [idSesion, mat.id, mat.cantidad]);
+            }
+        }
+
+        await client.query('COMMIT'); // CONFIRMAR CAMBIOS
+
         res.status(200).json({
-            message: 'Cita actualizada correctamente.',
-            cita: result.rows[0],
-            nota_tecnica: 'Los cambios relacionados (sesiones/diseños) fueron procesados automáticamente por la base de datos.'
+            message: 'Cita actualizada y materiales procesados correctamente.',
+            cita: citaResult.rows[0],
+            materiales_procesados: materiales ? materiales.length : 0
         });
 
     } catch (err) {
+        await client.query('ROLLBACK');
         console.error('Error al actualizar cita:', err);
         
-        // Manejo de errores de ENUM
+        // Manejo de errores específicos
+        if (err.code === 'P0001') { // Código que definimos en tu Trigger de Stock
+            return res.status(409).json({ 
+                error: 'Stock Insuficiente', 
+                detalle: err.message // El mensaje del trigger ("El material X solo tiene...")
+            });
+        }
         if (err.code === '22P02') {
              return res.status(400).json({ error: 'Tipo de dato inválido o valor de ENUM incorrecto.' });
         }
         
         res.status(500).json({ error: 'Error interno al actualizar la cita.' });
+    } finally {
+        client.release();
     }
 });
 
