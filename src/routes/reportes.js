@@ -137,4 +137,28 @@ router.get('/financiero-rollup', async (req, res) => {
     }
 });
 
+router.get('/comisiones', async (req, res) => {
+    const { mes, anio } = req.query;
+
+    // Si no envían parámetros, usamos la fecha actual
+    const fechaHoy = new Date();
+    const mesQuery = mes || (fechaHoy.getMonth() + 1); // JS meses 0-11
+    const anioQuery = anio || fechaHoy.getFullYear();
+
+    try {
+        // Llamada a la función PL/SQL que usa el CURSOR
+        const queryText = `SELECT * FROM calcular_comisiones_mes($1, $2)`;
+        const result = await pool.query(queryText, [mesQuery, anioQuery]);
+        
+        res.status(200).json({
+            periodo: `${mesQuery}/${anioQuery}`,
+            datos: result.rows
+        });
+
+    } catch (err) {
+        console.error('Error calculando comisiones:', err);
+        res.status(500).json({ error: 'Error interno al generar el reporte de nómina.' });
+    }
+});
+
 module.exports = router;

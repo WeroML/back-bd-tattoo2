@@ -121,8 +121,8 @@ router.put('/:id', async (req, res) => {
         total_estimado, 
         estado, 
         notas,
-        materiales,   
-        usuario_id    
+        materiales,   // Array: [{ id, cantidad }, ...]
+        usuario_id    // ID del usuario que realiza la acción
     } = req.body;
 
     const client = await pool.connect();
@@ -133,9 +133,9 @@ router.put('/:id', async (req, res) => {
         // ===============================================================
         if (estado === 'cancelada') {
             const motivoCancelacion = notas || 'Cancelación solicitada vía API';
-            const usuarioCancelacion = usuario_id || 1; // Fallback ID admin
+            const usuarioCancelacion = usuario_id || 1; 
 
-            // Llamamos a la función que creamos en el Paso 2
+            // Llamamos a la función de BD que maneja el reembolso y limpieza
             const cancelQuery = `SELECT cancelar_cita_con_reembolso($1, $2, $3) AS resultado`;
             const cancelResult = await client.query(cancelQuery, [id, motivoCancelacion, usuarioCancelacion]);
             
@@ -143,11 +143,11 @@ router.put('/:id', async (req, res) => {
         }
 
         // ===============================================================
-        // CASO 2: ACTUALIZACIÓN NORMAL (Transacción manual)
+        // CASO 2: ACTUALIZACIÓN NORMAL
         // ===============================================================
         await client.query('BEGIN'); 
 
-        // A. Construir UPDATE dinámico para la tabla CITAS
+        // A. Construir UPDATE dinámico
         const updates = [];
         const values = [id];
         let idx = 2;
@@ -157,14 +157,16 @@ router.put('/:id', async (req, res) => {
         if (estado)           { updates.push(`estado = $${idx++}::estado_cita`); values.push(estado); }
         if (notas)            { updates.push(`notas = $${idx++}`); values.push(notas); }
 
-        // Si no hay nada que actualizar en la cita y tampoco materiales, error.
+        // Si no hay datos para actualizar en la cita ni materiales, error.
         if (updates.length === 0 && (!materiales || materiales.length === 0)) {
             await client.query('ROLLBACK');
-            return res.status(400).json({ error: 'No hay datos para actualizar.' });
+            return res.status(400).json({ error: 'No se enviaron campos para actualizar.' });
         }
 
         let citaActualizada = null;
 
+        // B. Ejecutar Update en Cita 
+        // (Esto dispara el Trigger 'trg_audit_citas_a_sesiones' que crea el log en sesiones)
         if (updates.length > 0) {
             const updateQuery = `
                 UPDATE citas 
@@ -181,11 +183,10 @@ router.put('/:id', async (req, res) => {
             citaActualizada = result.rows[0];
         }
 
-        // B. PROCESAR MATERIALES (Solo si pasa a 'en_progreso')
-        // El Trigger de la BD ya habrá creado/actualizado la sesión al hacer el UPDATE arriba
+        // C. PROCESAR MATERIALES (Solo si pasa a 'en_progreso')
         if (estado === 'en_progreso' && materiales && materiales.length > 0) {
             
-            // Buscar la sesión activa más reciente
+            // 1. Buscar la sesión activa más reciente (recién creada por el Trigger)
             const sesionQuery = `
                 SELECT id FROM sesiones 
                 WHERE id_cita = $1 
@@ -200,7 +201,9 @@ router.put('/:id', async (req, res) => {
             const idUsuario = usuario_id || 1; 
 
             for (const mat of materiales) {
-                // 1. Registrar Consumo (Movimiento Inventario)
+                // 2. Registrar Consumo (Movimiento Inventario)
+                // El Trigger 'trg_validar_stock' verificará si hay existencias.
+                // El Trigger 'trg_actualizar_stock' restará la cantidad automáticamente.
                 const movQuery = `
                     INSERT INTO movimientos_inventario (
                         id_material, tipo_movimiento, cantidad, 
@@ -214,8 +217,7 @@ router.put('/:id', async (req, res) => {
                 `;
                 await client.query(movQuery, [mat.id, mat.cantidad, idSesion, idUsuario, id]);
 
-                // 2. Registrar Costo (Materiales Sesion)
-                // Omitimos 'subtotal' ya que es columna generada
+                // 3. Registrar Costo Financiero (Materiales Sesion)
                 const costoQuery = `
                     INSERT INTO materiales_sesion (
                         id_sesion, id_material, cantidad_usada, 
@@ -240,13 +242,14 @@ router.put('/:id', async (req, res) => {
         });
 
     } catch (err) {
-        // Solo hacemos rollback si la transacción manual estaba abierta
+        // Solo hacemos rollback si la transacción manual estaba abierta (no en cancelación)
         if (estado !== 'cancelada') {
             await client.query('ROLLBACK');
         }
         
         console.error('Error al actualizar cita:', err);
         
+        // Manejo de errores específicos
         if (err.code === 'P0001') { 
             return res.status(409).json({ error: 'Stock Insuficiente', detalle: err.message });
         }
@@ -259,6 +262,8 @@ router.put('/:id', async (req, res) => {
         client.release();
     }
 });
+
+module.exports = router;
 
 // DELETE /api/citas/:id - Eliminar una cita
 router.delete('/:id', async (req, res) => {

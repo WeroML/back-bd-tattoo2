@@ -1,56 +1,47 @@
 const express = require('express');
-const db = require('../db');
+// CORRECCIÓN: Importamos 'pool' correctamente
+const { pool } = require('../db'); 
 const router = express.Router();
 
+// -------------------------------------------------------------
 // GET /api/inventario/materiales
-// AQUI SE USA EL ÍNDICE
+// -------------------------------------------------------------
 router.get('/materiales', async (req, res) => {
-  try {
-
-    // 1️ Desactivar Seq Scan (SOLO DURANTE ESTA SESIÓN)
-    await db.query(`SET enable_seqscan = off;`);
-
-    // 2️ Ejecutar el EXPLAIN ANALYZE
-    const explainResult = await db.query(`
-      EXPLAIN ANALYZE
-      SELECT id, nombre, codigo, cantidad_existencia, nivel_reorden, precio_costo, activo
-      FROM materiales
-      WHERE activo = TRUE
-      ORDER BY nombre ASC;
-    `);
-
-    console.log("\n====== EXPLAIN ANALYZE ======");
-    explainResult.rows.forEach(row => console.log(row['QUERY PLAN']));
-    console.log("=============================\n");
-
-    // 3️ Ejecutar la consulta real
-    const data = await db.query(`
-      SELECT id, nombre, codigo, cantidad_existencia, nivel_reorden, precio_costo, activo
-      FROM materiales
-      WHERE activo = TRUE
-      ORDER BY nombre ASC;
-    `);
-
-    // 4️ Volver a activar Seq Scan
-    await db.query(`SET enable_seqscan = on;`);
-
-    res.status(200).json(data.rows);
-
-  } catch (err) {
-    console.error('Error al obtener materiales:', err);
-    res.status(500).json({ error: 'Error al consultar la tabla materiales.' });
-  }
+    try {
+        const queryText = `
+            SELECT 
+                id, 
+                codigo, 
+                nombre, 
+                descripcion, 
+                unidad, 
+                cantidad_existencia, 
+                nivel_reorden, 
+                precio_costo, 
+                activo, 
+                ultimo_precio_compra,  -- Precio sugerido
+                ultimo_proveedor_id    -- <--- INDISPENSABLE para autocompletado en compras
+            FROM materiales 
+            WHERE activo = true 
+            ORDER BY nombre ASC;
+        `;
+        const result = await pool.query(queryText);
+        res.status(200).json(result.rows);
+    } catch (err) {
+        console.error('Error al obtener materiales:', err);
+        res.status(500).json({ error: 'Error al obtener materiales' });
+    }
 });
 
-
-// Materiales faltantes - Reporte de inventario bajo
-// GET /api/inventario/inventario-bajo
+// -------------------------------------------------------------
+// GET /api/inventario/inventario-bajo (Reporte de escasez)
+// -------------------------------------------------------------
 router.get('/inventario-bajo', async (req, res) => {
     try {
-        // Consultamos directamente la vista
+        // Consultamos directamente la vista SQL
         const queryText = 'SELECT * FROM vista_materiales_faltantes ORDER BY cantidad_existencia ASC;';
         
-        const result = await db.query(queryText); // Cambiado de pool.query a db.query
+        const result = await pool.query(queryText); // Usamos pool.query
         
         res.status(200).json({
             mensaje: result.rowCount > 0 ? 'Se encontraron materiales con stock bajo.' : 'Inventario saludable.',
@@ -64,8 +55,9 @@ router.get('/inventario-bajo', async (req, res) => {
     }
 });
 
-
+// -------------------------------------------------------------
 // GET /api/inventario/compras
+// -------------------------------------------------------------
 router.get('/compras', async (req, res) => {
     const queryText = `
         SELECT id, id_proveedor, fecha_compra, numero_factura, total, recibido 
@@ -73,7 +65,7 @@ router.get('/compras', async (req, res) => {
         ORDER BY fecha_compra DESC
     `;
     try {
-        const result = await db.query(queryText);
+        const result = await pool.query(queryText);
         res.status(200).json(result.rows);
     } catch (err) {
         console.error('Error al obtener compras:', err);
@@ -81,7 +73,9 @@ router.get('/compras', async (req, res) => {
     }
 });
 
-// --- NUEVO: POST /api/inventario/materiales (Para crear productos) ---
+// -------------------------------------------------------------
+// POST /api/inventario/materiales (Crear productos nuevos)
+// -------------------------------------------------------------
 router.post('/materiales', async (req, res) => {
     const { nombre, codigo, cantidad_existencia, nivel_reorden, precio_costo } = req.body;
     
@@ -92,8 +86,8 @@ router.post('/materiales', async (req, res) => {
 
     try {
         const query = `
-            INSERT INTO materiales (nombre, codigo, cantidad_existencia, nivel_reorden, precio_costo, activo) 
-            VALUES ($1, $2, $3, $4, $5, true) 
+            INSERT INTO materiales (nombre, codigo, cantidad_existencia, nivel_reorden, precio_costo, activo, creado_en) 
+            VALUES ($1, $2, $3, $4, $5, true, NOW()) 
             RETURNING *
         `;
         const values = [
@@ -104,22 +98,31 @@ router.post('/materiales', async (req, res) => {
             precio_costo || 0
         ];
         
-        const result = await db.query(query, values);
+        const result = await pool.query(query, values);
         res.status(201).json(result.rows[0]);
     } catch (err) {
         console.error('Error al crear material:', err);
+        // Manejo de duplicados (código único)
+        if (err.code === '23505') {
+            return res.status(409).json({ error: 'El código de material ya existe.' });
+        }
         res.status(500).json({ error: err.message });
     }
 });
 
+// -------------------------------------------------------------
 // GET /api/inventario/materiales/:id - Obtener material por ID
+// -------------------------------------------------------------
 router.get('/materiales/:id', async (req, res) => {
     const { id } = req.params;
-    const queryText = `
-        SELECT * FROM materiales WHERE id = $1
-    `;
+    
+    // Validación de ID numérico
+    if (isNaN(id)) return res.status(400).json({ error: 'ID inválido' });
+
+    const queryText = `SELECT * FROM materiales WHERE id = $1`;
+    
     try {
-        const result = await db.query(queryText, [id]);
+        const result = await pool.query(queryText, [id]);
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Material no encontrado.' });
         }
@@ -130,14 +133,15 @@ router.get('/materiales/:id', async (req, res) => {
     }
 });
 
-// GET /api/inventario/materiales/codigo/:codigo - Obtener material por código
+// -------------------------------------------------------------
+// GET /api/inventario/materiales/codigo/:codigo
+// -------------------------------------------------------------
 router.get('/materiales/codigo/:codigo', async (req, res) => {
     const { codigo } = req.params;
-    const queryText = `
-        SELECT * FROM materiales WHERE codigo = $1
-    `;
+    const queryText = `SELECT * FROM materiales WHERE codigo = $1`;
+    
     try {
-        const result = await db.query(queryText, [codigo]);
+        const result = await pool.query(queryText, [codigo]);
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Material no encontrado.' });
         }
@@ -148,7 +152,9 @@ router.get('/materiales/codigo/:codigo', async (req, res) => {
     }
 });
 
+// -------------------------------------------------------------
 // PUT /api/inventario/materiales/:id - Actualizar material
+// -------------------------------------------------------------
 router.put('/materiales/:id', async (req, res) => {
     const { id } = req.params;
     const { nombre, codigo, cantidad_existencia, nivel_reorden, precio_costo, activo } = req.body;
@@ -177,7 +183,7 @@ router.put('/materiales/:id', async (req, res) => {
     `;
 
     try {
-        const result = await db.query(queryText, values);
+        const result = await pool.query(queryText, values);
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Material no encontrado.' });
         }
@@ -188,14 +194,15 @@ router.put('/materiales/:id', async (req, res) => {
     }
 });
 
+// -------------------------------------------------------------
 // DELETE /api/inventario/materiales/:id - Eliminar material (Soft Delete)
+// -------------------------------------------------------------
 router.delete('/materiales/:id', async (req, res) => {
     const { id } = req.params;
-    // Usamos soft delete (activo = false) para mantener integridad referencial
     const queryText = 'UPDATE materiales SET activo = false WHERE id = $1 RETURNING id';
 
     try {
-        const result = await db.query(queryText, [id]);
+        const result = await pool.query(queryText, [id]);
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Material no encontrado.' });
         }
@@ -206,26 +213,26 @@ router.delete('/materiales/:id', async (req, res) => {
     }
 });
 
+// -------------------------------------------------------------
 // GET /api/inventario/reporte-proveedores
-// Muestra el uso de GROUP BY y HAVING
+// -------------------------------------------------------------
 router.get('/reporte-proveedores', async (req, res) => {
   try {
     const query = `
       SELECT 
         p.nombre AS proveedor,
         COUNT(DISTINCT m.id) AS variedad_productos,
-        SUM(cd.cantidad) AS total_unidades_compradas,
+        COALESCE(SUM(cd.cantidad), 0) AS total_unidades_compradas,
         MAX(c.fecha_compra) AS ultima_compra
       FROM proveedores p
       JOIN compras c ON p.id = c.id_proveedor
       JOIN compras_detalle cd ON c.id = cd.id_compra
       JOIN materiales m ON cd.id_material = m.id
       GROUP BY p.nombre
-      HAVING COUNT(DISTINCT m.id) >= 1
       ORDER BY total_unidades_compradas DESC;
     `;
     
-    const result = await db.query(query);
+    const result = await pool.query(query);
     res.json(result.rows);
   } catch (err) {
     console.error('Error en reporte proveedores:', err);
