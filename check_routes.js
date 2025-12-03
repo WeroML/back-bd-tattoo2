@@ -9,6 +9,7 @@ const citasDisenosRouter = require('./src/routes/citas_disenos');
 const disenosRouter = require('./src/routes/disenos');
 const materialesRouter = require('./src/routes/materiales');
 
+
 console.log('clientesRouter:', typeof clientesRouter);
 console.log('artistasRouter:', typeof artistasRouter);
 console.log('citasRouter:', typeof citasRouter);

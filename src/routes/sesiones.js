@@ -1,18 +1,23 @@
 const express = require('express');
-const db = require('../db');
-const { pool } = require('../db');
+// CORRECCIÓN: Importación única y limpia del pool
+const { pool } = require('../db'); 
 
 const router = express.Router();
 
-// GET /api/sesiones
+// =================================================================
+// 1. RUTAS ESTÁTICAS Y DE BÚSQUEDA (Deben ir PRIMERO)
+// =================================================================
+
+// GET /api/sesiones - Obtener todas las sesiones (Útil para depuración o admin)
 router.get('/', async (req, res) => {
     const queryText = `
         SELECT id, id_cita, numero_sesion, fecha_programada, inicio_real, monto_cobrado, estado
         FROM sesiones 
         ORDER BY fecha_programada DESC
+        LIMIT 50; 
     `;
     try {
-        const result = await db.query(queryText);
+        const result = await pool.query(queryText);
         res.status(200).json(result.rows);
     } catch (err) {
         console.error('Error al obtener sesiones:', err);
@@ -20,63 +25,39 @@ router.get('/', async (req, res) => {
     }
 });
 
-// GET /api/sesiones/:id
-router.get('/:id', async (req, res) => {
-    const { id } = req.params;
-    const queryText = `
-        SELECT id, id_cita, numero_sesion, fecha_programada, inicio_real, monto_cobrado, estado
-        FROM sesiones 
-        WHERE id = $1
-    `;
-    try {
-        const result = await db.query(queryText, [id]);
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Sesión no encontrada.' });
-        }
-        res.status(200).json(result.rows[0]);
-    } catch (err) {
-        console.error('Error al obtener sesión:', err);
-        res.status(500).json({ error: 'Error al consultar la tabla sesiones.' });
-    }
-});
-
-// -------------------------------------------------------------
-// GET /api/sesiones/:id_cita - Obtener el historial completo de logs de sesión
-// -------------------------------------------------------------
-router.get('/:id_cita', async (req, res) => {
-    const { id_cita } = req.params;
+// GET /api/sesiones/busqueda - Usa la función PL/SQL para filtrado avanzado
+// ESTA RUTA DEBE IR ANTES DE /:id
+router.get('/busqueda', async (req, res) => {
+    const { id_cita, estado, id_artista, id_cliente } = req.query;
 
     try {
-        const queryText = `
-            SELECT *
-            FROM sesiones
-            WHERE id_cita = $1
-            ORDER BY numero_sesion ASC, creado_en ASC; -- Ordenado por sesión y cronología
-        `;
-        const result = await pool.query(queryText, [id_cita]);
+        const params = [
+            id_cita || null,
+            estado || null,
+            id_artista || null,
+            id_cliente || null
+        ];
 
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'No se encontró historial de sesiones para esta cita.' });
-        }
-
+        // Llamada a la función SQL que creamos
+        const queryText = `SELECT * FROM fn_buscar_sesiones($1, $2, $3, $4)`;
+        const result = await pool.query(queryText, params);
+        
         res.status(200).json(result.rows);
+
     } catch (err) {
-        console.error('Error al obtener historial de sesión:', err);
-        res.status(500).json({ error: 'Error interno al consultar el historial.' });
+        console.error('Error buscando sesiones:', err);
+        res.status(500).json({ error: 'Error al consultar sesiones con filtros.' });
     }
 });
 
-// -------------------------------------------------------------
-// POST /api/sesiones/log - Registrar nuevo log de sesión
-// -------------------------------------------------------------
+// POST /api/sesiones/log - Registrar nuevo log de sesión (Transaccional)
 router.post('/log', async (req, res) => {
-    // 1. Datos de la nueva solicitud
-    const {
-        id_cita,
-        numero_sesion,
-        estado_nuevo, // Ej: 'en_descanso', 'reinicio_trabajo', 'finalizada'
-        monto_cobrado_opcional,
-        notas
+    const { 
+        id_cita, 
+        numero_sesion, 
+        estado_nuevo, 
+        monto_cobrado_opcional, 
+        notas 
     } = req.body;
 
     if (!id_cita || !numero_sesion || !estado_nuevo) {
@@ -114,17 +95,17 @@ router.post('/log', async (req, res) => {
             )
             RETURNING id;
         `;
-
-        const isCompleted = estado_nuevo === 'completada' || estado_nuevo === 'cancelada' || estado_nuevo === 'no_asistio';
-
+        
+        const isCompleted = ['completada', 'cancelada', 'no_asistio'].includes(estado_nuevo);
+        
         const logValues = [
             id_cita,
             numero_sesion,
             prevLog.fecha_programada,
-            prevLog.inicio_real,
-            isCompleted ? NOW() : null, // Fin real solo si es un estado final
+            prevLog.inicio_real, 
+            isCompleted ? NOW() : null, 
             prevLog.duracion_minutos,
-            prevLog.monto_cobrado + (monto_cobrado_opcional || 0), // Sumar monto opcional
+            prevLog.monto_cobrado + (monto_cobrado_opcional || 0), 
             estado_nuevo,
             notas || `Cambio de estado a ${estado_nuevo}`
         ];
@@ -132,19 +113,14 @@ router.post('/log', async (req, res) => {
         const result = await client.query(insertLogQuery, logValues);
         const newLogId = result.rows[0].id;
 
-
-        // ---------------------------------------------------------
-        // 4. ACTUALIZAR EL ESTADO DE LA CITA MAESTRA (AÑADIDO)
-        // ---------------------------------------------------------
+        // 4. ACTUALIZAR EL ESTADO DE LA CITA MAESTRA
         const updateCitaQuery = `
             UPDATE citas
             SET estado = $1::estado_cita
             WHERE id = $2;
         `;
-
-        // Se actualiza el estado de la cita al nuevo estado de la sesión
+        
         await client.query(updateCitaQuery, [estado_nuevo, id_cita]);
-
 
         await client.query('COMMIT');
 
@@ -158,15 +134,69 @@ router.post('/log', async (req, res) => {
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('Error al registrar nuevo log de sesión:', err);
-        // Manejar error de tipo (ENUM)
-        if (err.code === '42883') {
-            return res.status(400).json({ error: `El estado '${estado_nuevo}' no existe en el ENUM de citas o sesiones.` });
+        
+        if (err.code === '42883' || err.code === '22P02') {
+             return res.status(400).json({ error: `El estado '${estado_nuevo}' no es válido para el ENUM.` });
         }
+        
         res.status(500).json({ error: 'Error interno al registrar el evento de sesión.' });
     } finally {
         client.release();
     }
 });
 
+// =================================================================
+// 3. RUTAS DINÁMICAS (POR ID - Deben ir AL FINAL)
+// =================================================================
+
+// GET /api/sesiones/historial/:id_cita 
+// (Renombrada a 'historial' para evitar conflicto con buscar por ID de sesión)
+router.get('/historial/:id_cita', async (req, res) => {
+    const { id_cita } = req.params;
+
+    try {
+        const queryText = `
+            SELECT * FROM sesiones
+            WHERE id_cita = $1
+            ORDER BY numero_sesion ASC, creado_en ASC;
+        `;
+        const result = await pool.query(queryText, [id_cita]);
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'No se encontró historial para esta cita.' });
+        }
+        
+        res.status(200).json(result.rows);
+    } catch (err) {
+        console.error('Error al obtener historial:', err);
+        res.status(500).json({ error: 'Error interno.' });
+    }
+});
+
+// GET /api/sesiones/:id - Obtener una sesión específica por su ID único (PK)
+// Esta ruta "atrapa" cualquier cosa que no coincida con las anteriores, por eso va al final.
+router.get('/:id', async (req, res) => {
+    const { id } = req.params;
+    
+    // VALIDACIÓN DE SEGURIDAD: Si no es un número, retornar error 400
+    // Esto previene el error "invalid input syntax for type bigint" si alguien escribe texto
+    if (isNaN(id)) {
+        return res.status(400).json({ error: 'El ID de la sesión debe ser numérico.' });
+    }
+
+    const queryText = `
+        SELECT * FROM sesiones WHERE id = $1
+    `;
+    try {
+        const result = await pool.query(queryText, [id]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Sesión no encontrada.' });
+        }
+        res.status(200).json(result.rows[0]);
+    } catch (err) {
+        console.error('Error al obtener sesión:', err);
+        res.status(500).json({ error: 'Error al consultar la tabla sesiones.' });
+    }
+});
 
 module.exports = router;

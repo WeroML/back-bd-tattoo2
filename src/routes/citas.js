@@ -163,74 +163,76 @@ router.post('/generar', async (req, res) => {
     }
 });
 
-// PUT /api/citas/:id - Actualizar una cita
+// PUT /api/citas/:id - Actualización simplificada (El Trigger maneja la lógica de negocio)
 router.put('/:id', async (req, res) => {
     const { id } = req.params;
-    const {
-        id_artista,
-        fecha_programada,
-        duracion_estimada_minutos,
-        total_estimado,
-        estado,
-        notas
+    const { 
+        fecha_programada, 
+        total_estimado, 
+        estado, 
+        notas 
     } = req.body;
 
-    // Construcción dinámica de la consulta UPDATE
-    const fields = [];
-    const values = [];
-    let paramIndex = 1;
-
-    if (id_artista !== undefined) {
-        fields.push(`id_artista = $${paramIndex++}`);
-        values.push(id_artista);
-    }
-    if (fecha_programada !== undefined) {
-        fields.push(`fecha_programada = $${paramIndex++}`);
-        values.push(fecha_programada);
-    }
-    if (duracion_estimada_minutos !== undefined) {
-        fields.push(`duracion_estimada_minutos = $${paramIndex++}`);
-        values.push(duracion_estimada_minutos);
-    }
-    if (total_estimado !== undefined) {
-        fields.push(`total_estimado = $${paramIndex++}`);
-        values.push(total_estimado);
-    }
-    if (estado !== undefined) {
-        fields.push(`estado = $${paramIndex++}::estado_cita`);
-        values.push(estado);
-    }
-    if (notas !== undefined) {
-        fields.push(`notas = $${paramIndex++}`);
-        values.push(notas);
-    }
-
-    if (fields.length === 0) {
-        return res.status(400).json({ error: 'No se proporcionaron campos para actualizar.' });
-    }
-
-    values.push(id);
-    const queryText = `
-        UPDATE citas
-        SET ${fields.join(', ')}
-        WHERE id = $${paramIndex}
-        RETURNING *
-    `;
-
     try {
-        const result = await db.query(queryText, values);
+        // 1. Construcción dinámica de la consulta (Solo actualizamos lo que envías)
+        const updates = [];
+        const values = [id];
+        let idx = 2; // El $1 es el id
+
+        if (fecha_programada) { 
+            updates.push(`fecha_programada = $${idx++}`); 
+            values.push(fecha_programada); 
+        }
+        if (total_estimado) { 
+            updates.push(`total_estimado = $${idx++}`); 
+            values.push(total_estimado); 
+        }
+        if (estado) { 
+            // Hacemos cast explícito al ENUM
+            updates.push(`estado = $${idx++}::estado_cita`); 
+            values.push(estado); 
+        }
+        if (notas) { 
+            updates.push(`notas = $${idx++}`); 
+            values.push(notas); 
+        }
+
+        // Validación: Si no mandan nada, no hacemos nada
+        if (updates.length === 0) {
+            return res.status(400).json({ error: 'No se enviaron campos para actualizar.' });
+        }
+
+        // 2. Ejecutar el UPDATE
+        // Al ejecutarse esto, PostgreSQL disparará automáticamente tu función 'propagar_cambios_cita'
+        const updateQuery = `
+            UPDATE citas 
+            SET ${updates.join(', ')} 
+            WHERE id = $1 
+            RETURNING *;
+        `;
         
-        if (result.rows.length === 0) {
+        const result = await pool.query(updateQuery, values);
+
+        if (result.rowCount === 0) {
             return res.status(404).json({ error: 'Cita no encontrada.' });
         }
 
+        // 3. Responder
         res.status(200).json({
-            message: 'Cita actualizada exitosamente.',
-            cita: result.rows[0]
+            message: 'Cita actualizada correctamente.',
+            cita: result.rows[0],
+            nota_tecnica: 'Los cambios relacionados (sesiones/diseños) fueron procesados automáticamente por la base de datos.'
         });
+
     } catch (err) {
-        console.error(`Error al actualizar cita ${id}:`, err);
-        res.status(500).json({ error: 'Error al actualizar la cita.' });
+        console.error('Error al actualizar cita:', err);
+        
+        // Manejo de errores de ENUM
+        if (err.code === '22P02') {
+             return res.status(400).json({ error: 'Tipo de dato inválido o valor de ENUM incorrecto.' });
+        }
+        
+        res.status(500).json({ error: 'Error interno al actualizar la cita.' });
     }
 });
 
