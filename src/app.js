@@ -24,6 +24,7 @@ const categoriasArtistasCubeRouter = require('./routes/categorias_artistas_cube'
 const categoriasRouter = require('./routes/categorias');
 const app = express();
 
+
 // Middlewares
 // lectura en formato JSON
 app.use(cors()); // <--- 2. AGREGAR ESTO AQUÍ (Antes de las rutas y del json)
@@ -50,6 +51,7 @@ app.use('/api', funcionesResumenRoutes);
 app.use('/api', artistasCitasSecuenciaRouter);
 app.use('/api', categoriasArtistasCubeRouter);
 app.use('/api/categorias', categoriasRouter);
+
 
 // Ruta de prueba 
 app.get('/', (req, res) => {
