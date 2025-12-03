@@ -22,6 +22,7 @@ const funcionesResumenRoutes = require('./routes/funciones_resumen');
 const artistasCitasSecuenciaRouter = require('./routes/artistas_citas_secuencia');
 const categoriasArtistasCubeRouter = require('./routes/categorias_artistas_cube');
 const categoriasRouter = require('./routes/categorias');
+const categoriasDisenosCursorRoutes = require('./routes/categorias_disenos_cursor');
 const app = express();
 
 
@@ -51,6 +52,7 @@ app.use('/api', funcionesResumenRoutes);
 app.use('/api', artistasCitasSecuenciaRouter);
 app.use('/api', categoriasArtistasCubeRouter);
 app.use('/api/categorias', categoriasRouter);
+app.use('/api/reportes', categoriasDisenosCursorRoutes);
 
 
 // Ruta de prueba 
